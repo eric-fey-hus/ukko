@@ -1,0 +1,35 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "ukko"
+version = "0.1.0"
+authors = [
+    { name = "Eric Fey", email = "eric.fey@hus.fi" },
+]
+description = "UKKO: Transformer model for tabular longitudonal data"
+readme = "README.md"
+requires-python = ">=3.8"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+
+#[project.optional-dependencies]
+#test = [
+#    "pytest>=7.0",
+#]
+
+#[tool.pytest.ini_options]
+#testpaths = ["tests"]
+
+[tool.hatch.build]
+include = ["src/ukko/**/*"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/ukko"]
+
+[tool.hatch.build.targets.sdist]
+packages = ["src/ukko"]
