@@ -8,6 +8,32 @@ If you develop them in a notebook, mpve them here when ready.
 import torch
 import torch.nn as nn
 import math
+import matplotlib.pyplot as plt
+import numpy as np
+
+# Assuming you have lists/arrays of training metrics
+def plot_training_curves(
+    train_losses, 
+    val_losses=None, 
+    epochs=None,
+    figsize=(10, 6)
+):
+    plt.figure(figsize=figsize)
+    epochs = epochs or range(1, len(train_losses) + 1)
+    
+    # Plot training loss
+    plt.plot(epochs, train_losses, 'b-', label='Training Loss')
+    
+    # Plot validation loss if available
+    if val_losses:
+        plt.plot(epochs, val_losses, 'r--', label='Validation Loss')
+    
+    plt.title('Model Loss Over Time')
+    plt.xlabel('Epoch')
+    plt.ylabel('Loss')
+    plt.legend()
+    plt.grid(True)
+    plt.show()
 
 class PositionalEncoding(nn.Module):
     """
@@ -242,3 +268,121 @@ class DualAttentionModel(nn.Module):
 
         return x, feat_weights, time_weights
 
+def visualize_predictions(model, test_loader, device='cuda', num_examples=3):
+    
+    def plot_predicted_vs_data(col):
+        plt.scatter(predictions[:,col], y[:,col],
+                    c=np.random.rand(3,), label=f'Feature {col}', alpha=0.5)
+        # Add perfect line
+        plt.plot([y.min(), y.max()], [y.min(), y.max()], 'k--', lw=2)
+        plt.xlabel('Predicted')
+        plt.ylabel('True')
+        plt.title(f'Feature {col}')
+        plt.legend()
+    
+    model.eval()
+
+    # Get some test examples
+    x, y = next(iter(test_loader))
+    x, y = x.to(device), y.to(device)
+
+    # Get predictions
+    with torch.no_grad():
+        predictions, feat_attn, time_attn = model(x)
+        predictions = predictions.cpu().numpy()
+        x = x.cpu().numpy()
+        y = y.cpu().numpy()
+
+    # Plot multiple features 
+    for i, feature_idx in enumerate([0,1,2]):#([0, 7, 14]):  # Beginning, middle, and end features
+        plt.figure(figsize=(15, 5))
+
+        # Plot a few examples for each feature
+        for example_idx in range(min(num_examples, x.shape[0])):
+            plt.subplot(num_examples, 1, example_idx+1)
+
+            # Plot input sequence
+            time_input = np.arange(x.shape[2])
+            plt.plot(time_input, x[example_idx, feature_idx],
+                    label='Input Sequence', color='blue')
+
+            # Plot true continuation
+            #time_target = np.arange(x.shape[2], x.shape[2] + y.shape[2])
+            time_target = [x.shape[2] + 5 - 1]
+            plt.plot(time_target, y[example_idx, feature_idx], "x-",
+                    label='True Continuation', color='green')
+
+            # Plot prediction
+            plt.scatter(time_target[0], predictions[example_idx, feature_idx],
+                       color='red', label='Model Prediction', s=100)
+
+            plt.title(f'Example {example_idx + 1}, Feature {feature_idx}')
+            plt.legend(loc='upper left')
+            plt.grid(True)
+
+        plt.tight_layout()
+        plt.show()
+
+    # Plot data vs predicted & groundtruth vs predicted
+    plt.figure(figsize=(15, 4))
+    # data vs predicted
+    plt.subplot(1, 3, 1)
+    print(f"Data: {y.shape}")
+    print(f"Predictions: {predictions.shape}")
+    np.random.seed(1)
+    for col in range(y.shape[1]):
+        plot_predicted_vs_data(col)
+
+    # Plot data vs predicted first features seperately
+    plt.figure(figsize=(15,3))
+    for f in range(4):
+        plt.subplot(1, 4, f+1)
+        plot_predicted_vs_data(f)
+
+    # Visualize attention weights
+    plt.figure(figsize=(15, 3))
+
+    # Feature attention weights
+    plt.subplot(1, 4, 1)
+    feat_attn_avg = feat_attn.mean(dim=(0, 1)).cpu().numpy()
+    plt.imshow(feat_attn_avg, aspect='auto', cmap='viridis')
+    plt.colorbar()
+    plt.title('Feature Attention Weights')
+    plt.xlabel('Target Feature')
+    plt.ylabel('Source Feature')
+
+    # Time attention weights
+    plt.subplot(1, 4, 2)
+    time_attn_avg = time_attn.mean(dim=(0, 1)).cpu().numpy()
+    plt.imshow(time_attn_avg, aspect='auto', cmap='viridis')
+    plt.colorbar()
+    plt.title('Time Attention Weights')
+    plt.xlabel('Target Time Step')
+    plt.ylabel('Source Time Step')
+
+    plt.tight_layout()
+    plt.show()
+
+# Assuming you have lists/arrays of training metrics
+def plot_training_curves(
+    train_losses, 
+    val_losses=None, 
+    epochs=None,
+    figsize=(10, 6)
+):
+    plt.figure(figsize=figsize)
+    epochs = epochs or range(1, len(train_losses) + 1)
+    
+    # Plot training loss
+    plt.plot(epochs, train_losses, 'b-', label='Training Loss')
+    
+    # Plot validation loss if available
+    if val_losses:
+        plt.plot(epochs, val_losses, 'r--', label='Validation Loss')
+    
+    plt.title('Model Loss Over Time')
+    plt.xlabel('Epoch')
+    plt.ylabel('Loss')
+    plt.legend()
+    plt.grid(True)
+    plt.show()
