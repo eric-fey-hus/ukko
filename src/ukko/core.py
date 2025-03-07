@@ -160,7 +160,135 @@ class FeedForward(nn.Module):
     def forward(self, x):
         return self.linear2(self.dropout(self.activation(self.linear1(x))))
 
+
+class DualAttentionModule(nn.Module):
+    """
+    A module that implements dual attention mechanism (feature and time attention).
+    
+    Model architecture:
+    - Input projection
+    - Positional encoding   
+    - Feature attention block
+      - inlcudig feature feed-forward MLP
+    - Time attention block
+      - inlcudig time feed-forward MLP
+    - Output layer
+      - including final feed-forward MLP
+    - Residual connections throughout:
+        - Feature attention block
+        - Time attention block
+        - Each feed-forward MLP block
+    """
+    def __init__(self, n_features, time_steps, d_model=128, n_heads=8, dropout=0.1):
+        super().__init__()
+        self.d_model = d_model
+        
+        # Input projection (only needed for first module)
+        self.input_projection = nn.Linear(1, d_model)
+
+        # Positional encoding
+        self.pos_encoder = PositionalEncoding(d_model)
+
+        # Feature attention block
+        self.feature_attention = MultiHeadAttention(d_model, n_heads, dropout)
+        self.feature_norm = nn.LayerNorm(d_model)
+        self.feature_ff = FeedForward(d_model, dropout=dropout)
+        self.feature_ff_norm = nn.LayerNorm(d_model)
+
+        # Time attention block
+        self.time_attention = MultiHeadAttention(d_model, n_heads, dropout)
+        self.time_norm = nn.LayerNorm(d_model)
+        self.time_ff = FeedForward(d_model, dropout=dropout)
+        self.time_ff_norm = nn.LayerNorm(d_model)
+
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(self, x, is_first_module=False):
+        batch_size, n_features, time_steps, d_model = x.shape
+
+        # Apply input projection and positional encoding only for first module
+        if is_first_module:
+            x = self.input_projection(x.unsqueeze(-1))  # Project to d_model
+            x = self.pos_encoder(x)
+
+        # Feature attention block
+        x_feat = x.transpose(1, 2).reshape(batch_size * time_steps, n_features, self.d_model)
+        identity = x_feat
+
+        x_feat, feat_weights = self.feature_attention(x_feat, x_feat, x_feat)
+        x_feat = identity + self.dropout(x_feat)
+        x_feat = self.feature_norm(x_feat)
+
+        identity = x_feat
+        x_feat = identity + self.dropout(self.feature_ff(x_feat))
+        x_feat = self.feature_ff_norm(x_feat)
+
+        x = x_feat.view(batch_size, time_steps, n_features, self.d_model).transpose(1, 2)
+
+        # Time attention block
+        x_time = x.reshape(batch_size * n_features, time_steps, self.d_model)
+        identity = x_time
+
+        x_time, time_weights = self.time_attention(x_time, x_time, x_time)
+        x_time = identity + self.dropout(x_time)
+        x_time = self.time_norm(x_time)
+
+        identity = x_time
+        x_time = identity + self.dropout(self.time_ff(x_time))
+        x_time = self.time_ff_norm(x_time)
+
+        x = x_time.view(batch_size, n_features, time_steps, self.d_model)
+
+        return x, feat_weights, time_weights
+
 class DualAttentionModel(nn.Module):
+    """
+    A model that stacks multiple DualAttentionModules followed by a final projection.
+    """
+    def __init__(self, n_features, time_steps, d_model=128, n_heads=8, dropout=0.1, n_modules=1):
+        super().__init__()
+        
+        # Stack of dual attention modules
+        self.modules_list = nn.ModuleList([
+            DualAttentionModule(n_features, time_steps, d_model, n_heads, dropout)
+            for _ in range(n_modules)
+        ])
+
+        # Output layers
+        self.output_ff = FeedForward(d_model, dropout=dropout)
+        self.output_norm = nn.LayerNorm(d_model)
+        self.fc = nn.Linear(d_model, 1)
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(self, x):
+        batch_size, n_features, time_steps = x.shape
+        x = x.unsqueeze(-1)  # [batch_size, n_features, time_steps, 1]
+
+        # Store attention weights from all modules
+        all_feat_weights = []
+        all_time_weights = []
+
+        # Pass through each dual attention module
+        for i, module in enumerate(self.modules_list):
+            x, feat_weights, time_weights = module(x, is_first_module=(i==0))
+            all_feat_weights.append(feat_weights)
+            all_time_weights.append(time_weights)
+
+        # Global average pooling over time
+        x = x.mean(dim=2)  # [batch_size, n_features, d_model]
+
+        # Final feed-forward with residual connection
+        identity = x
+        x = identity + self.dropout(self.output_ff(x))
+        x = self.output_norm(x)
+
+        # Final projection
+        x = self.fc(x).squeeze(-1)  # [batch_size, n_features]
+
+        # Return last module's attention weights (or could return all)
+        return x, all_feat_weights[-1], all_time_weights[-1]
+
+class DualAttentionModelOld(nn.Module):
     """
     A dual attention model that incorporates both feature and time attention mechanisms.
     
@@ -268,6 +396,7 @@ class DualAttentionModel(nn.Module):
 
         return x, feat_weights, time_weights
 
+    
 def visualize_predictions(model, test_loader, device='cuda', num_examples=3):
     
     def plot_predicted_vs_data(col):
@@ -370,7 +499,7 @@ def plot_training_curves(
     epochs=None,
     figsize=(10, 6)
 ):
-    plt.figure(figsize=figsize)
+    #plt.figure(figsize=figsize)
     epochs = epochs or range(1, len(train_losses) + 1)
     
     # Plot training loss
