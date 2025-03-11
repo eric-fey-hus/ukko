@@ -258,12 +258,14 @@ class DualAttentionModel(nn.Module):
         self.output_ff = FeedForward(d_model, dropout=dropout)
         self.output_norm = nn.LayerNorm(d_model)
         self.fc = nn.Linear(d_model, 1)
+        self.fcd = nn.Linear(d_model, d_model)
+        self.final_fc = nn.Linear(d_model, 1)  # Final classification layer
         self.dropout = nn.Dropout(dropout)
 
     def forward(self, x):
         batch_size, n_features, time_steps = x.shape
         x = x.unsqueeze(-1)  # [batch_size, n_features, time_steps, 1]
-
+        
         # Store attention weights from all modules
         all_feat_weights = []
         all_time_weights = []
@@ -283,7 +285,10 @@ class DualAttentionModel(nn.Module):
         x = self.output_norm(x)
 
         # Final projection
-        x = self.fc(x).squeeze(-1)  # [batch_size, n_features]
+        x = self.fcd(x)  # [batch_size, n_features, d_model]
+        x = x.mean(dim=1) # [batch_size, d_model] - average over features
+        x = self.final_fc(x).float()  # [batch_size, 1] 
+        x = x.squeeze(-1) # remove last dimentsion, which is 1
 
         # Return last module's attention weights (or could return all)
         return x, all_feat_weights[-1], all_time_weights[-1]
