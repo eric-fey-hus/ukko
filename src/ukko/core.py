@@ -10,6 +10,7 @@ import torch.nn as nn
 import math
 import matplotlib.pyplot as plt
 import numpy as np
+import torch.nn.functional as F
 
 # Assuming you have lists/arrays of training metrics
 def plot_training_curves(
@@ -254,12 +255,17 @@ class DualAttentionModel(nn.Module):
             for _ in range(n_modules)
         ])
 
+        # Add learned pooling weights
+        self.time_pool = nn.Parameter(torch.randn(d_model))
+        self.pool_attention = nn.Linear(d_model, 1)
+        self.feature_pool = nn.Linear(n_features, 1)  # Learned pooling weights
+        
         # Output layers
         self.output_ff = FeedForward(d_model, dropout=dropout)
         self.output_norm = nn.LayerNorm(d_model)
         self.fc = nn.Linear(d_model, 1)
         self.fcd = nn.Linear(d_model, d_model)
-        self.final_fc = nn.Linear(d_model, 1)  # Final classification layer
+        self.final_fc = nn.Linear(d_model, 2)  # Final classification layer: number of classes
         self.dropout = nn.Dropout(dropout)
 
     def forward(self, x):
@@ -276,8 +282,15 @@ class DualAttentionModel(nn.Module):
             all_feat_weights.append(feat_weights)
             all_time_weights.append(time_weights)
 
-        # Global average pooling over time
-        x = x.mean(dim=2)  # [batch_size, n_features, d_model]
+        # Pooling (over time)
+        # Instead of: Global average pooling over time
+        # x = x.mean(dim=2)  # [batch_size, n_features, d_model]
+        # We do: learned pooling:
+        # Calculate attention weights for time steps
+        time_weights = torch.tanh(self.pool_attention(x))  # [batch_size, n_features, time_steps, 1]
+        time_weights = F.softmax(time_weights, dim=2)  # [batch_size, n_features, time_steps, 1]
+        # Apply weighted pooling
+        x = (x * time_weights).sum(dim=2)  # [batch_size, n_features, d_model]
 
         # Final feed-forward with residual connection
         identity = x
@@ -286,10 +299,15 @@ class DualAttentionModel(nn.Module):
 
         # Final projection
         x = self.fcd(x)  # [batch_size, n_features, d_model]
-        x = x.mean(dim=1) # [batch_size, d_model] - average over features
-        x = self.final_fc(x).float()  # [batch_size, 1] 
-        x = x.squeeze(-1) # remove last dimentsion, which is 1
+        # Insted of mean pooling over features
+        # x = x.mean(dim=1) # [batch_size, d_model] - average over features
+        # Use learned pooling
+        x = x.transpose(1, 2)  # [batch_size, d_model, n_features]
+        x = self.feature_pool(x)  # [batch_size, d_model, 1]
+        x = x.squeeze(-1)  # [batch_size, d_model]
 
+        x = self.final_fc(x)  # [batch_size, 1] 
+        
         # Return last module's attention weights (or could return all)
         return x, all_feat_weights[-1], all_time_weights[-1]
 
@@ -334,12 +352,13 @@ class DualAttentionModelOld(nn.Module):
         self.time_norm = nn.LayerNorm(d_model)
         self.time_ff = FeedForward(d_model, dropout=dropout)
         self.time_ff_norm = nn.LayerNorm(d_model)
-
+        
         # Output layers with residual connection
         self.output_ff = FeedForward(d_model, dropout=dropout)
         self.output_norm = nn.LayerNorm(d_model)
         self.fc = nn.Linear(d_model, 1)
         self.dropout = nn.Dropout(dropout)
+
 
     def forward(self, x):
         # x shape: [batch_size, n_features, time_steps]
