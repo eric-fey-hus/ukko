@@ -160,6 +160,49 @@ class FeedForward(nn.Module):
 
     def forward(self, x):
         return self.linear2(self.dropout(self.activation(self.linear1(x))))
+    
+class ClassificationHead(nn.Module):
+    """
+    A modular classification head that handles feature pooling and classification.
+    
+    Model architecture:
+    - Feature pooling (learned or mean)
+    - Classifier MLP with:
+        - Linear layer
+        - ReLU activation
+        - Dropout
+        - Final linear projection
+    """
+    def __init__(self, d_model, n_features, n_classes, dropout=0.1, use_learned_pooling=True):
+        super().__init__()
+        
+        # Feature pooling
+        self.use_learned_pooling = use_learned_pooling
+        if use_learned_pooling:
+            self.feature_pool = nn.Linear(n_features, 1)
+        
+        # Classification layers
+        self.classifier = nn.Sequential(
+            nn.Linear(d_model, d_model // 2),
+            nn.ReLU(),
+            nn.Dropout(dropout),
+            nn.Linear(d_model // 2, n_classes)
+        )
+
+    def forward(self, x):
+        # x shape: [batch_size, n_features, d_model]
+        
+        # Pool across features
+        if self.use_learned_pooling:
+            x = x.transpose(1, 2)  # [batch_size, d_model, n_features]
+            x = self.feature_pool(x)  # [batch_size, d_model, 1]
+            x = x.squeeze(-1)  # [batch_size, d_model]
+        else:
+            x = x.mean(dim=1)  # [batch_size, d_model]
+        
+        # Classification
+        logits = self.classifier(x)  # [batch_size, n_classes]
+        return logits
 
 
 class DualAttentionModule(nn.Module):
@@ -420,7 +463,69 @@ class DualAttentionModelOld(nn.Module):
 
         return x, feat_weights, time_weights
 
-class DualAttentionClassifier(nn.Module):
+
+class DualAttentionClassifier1(nn.Module):
+    """
+    A dual attention model that incorporates both feature and time attention mechanisms.
+    Similar to DualAttentionModel but outputs only 1 classification (for each sample).
+    Uses DualAttentionModule for the main processing.
+    """
+    def __init__(self, n_features, time_steps, n_classes, d_model=128, n_heads=8, dropout=0.1, n_modules=1):
+        super().__init__()
+        
+        # Stack of dual attention modules
+        self.modules_list = nn.ModuleList([
+            DualAttentionModule(n_features, time_steps, d_model, n_heads, dropout)
+            for _ in range(n_modules)
+        ])
+        
+        # Output layers with residual connection
+        self.output_ff = FeedForward(d_model, dropout=dropout)
+        self.output_norm = nn.LayerNorm(d_model)
+        
+        # Learned pooling over features
+        self.feature_pool = nn.Linear(n_features, 1)
+
+        # Classification head (inlcuding feature pooling)
+        self.classification_head = ClassificationHead(
+            d_model=d_model,
+            n_features=n_features,
+            n_classes=n_classes,
+            dropout=dropout,
+            use_learned_pooling=True
+        )
+
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(self, x):
+        # x shape: [batch_size, n_features, time_steps]
+        batch_size, n_features, time_steps = x.shape
+        x = x.unsqueeze(-1)  # [batch_size, n_features, time_steps, 1]
+        
+        # Store attention weights from all modules
+        all_feat_weights = []
+        all_time_weights = []
+
+        # Pass through each dual attention module
+        for i, module in enumerate(self.modules_list):
+            x, feat_weights, time_weights = module(x, is_first_module=(i==0))
+            all_feat_weights.append(feat_weights)
+            all_time_weights.append(time_weights)
+
+        # Global average pooling over time
+        x = x.mean(dim=2)  # [batch_size, n_features, d_model]
+
+        # Final feed-forward with residual connection
+        identity = x
+        x = identity + self.dropout(self.output_ff(x))
+        x = self.output_norm(x)
+
+       # Classification head inlcuding feature pooling
+        logits = self.classification_head(x)  # [batch_size, n_classes]
+        
+        return logits, all_feat_weights[-1], all_time_weights[-1]
+
+class DualAttentionClassifier_old(nn.Module):
     """
     A dual attention model that incorporates both feature and time attention mechanisms.
     Similar to DualAttentionModelOld but outputs classifications for each feature (and for each sample ;-)).
