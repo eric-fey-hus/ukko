@@ -420,6 +420,204 @@ class DualAttentionModelOld(nn.Module):
 
         return x, feat_weights, time_weights
 
+class DualAttentionClassifier(nn.Module):
+    """
+    A dual attention model that incorporates both feature and time attention mechanisms.
+    Similar to DualAttentionModelOld but outputs classifications for each feature (and for each sample ;-)).
+    """
+    def __init__(self, n_features, time_steps, n_classes, d_model=128, n_heads=8, dropout=0.1):
+        super().__init__()
+
+        self.d_model = d_model
+        self.n_features = n_features
+        self.n_classes = n_classes
+
+        # Input projection
+        self.input_projection = nn.Linear(1, d_model)
+
+        # Positional encoding
+        self.pos_encoder = PositionalEncoding(d_model)
+
+        # Feature attention block
+        self.feature_attention = MultiHeadAttention(d_model, n_heads, dropout)
+        self.feature_norm = nn.LayerNorm(d_model)
+        self.feature_ff = FeedForward(d_model, dropout=dropout)
+        self.feature_ff_norm = nn.LayerNorm(d_model)
+
+        # Time attention block
+        self.time_attention = MultiHeadAttention(d_model, n_heads, dropout)
+        self.time_norm = nn.LayerNorm(d_model)
+        self.time_ff = FeedForward(d_model, dropout=dropout)
+        self.time_ff_norm = nn.LayerNorm(d_model)
+        
+        # Output layers with residual connection
+        self.output_ff = FeedForward(d_model, dropout=dropout)
+        self.output_norm = nn.LayerNorm(d_model)
+        
+        # Classification head
+        self.classifier = nn.Sequential(
+            nn.Linear(d_model, d_model // 2),
+            nn.ReLU(),
+            nn.Dropout(dropout),
+            nn.Linear(d_model // 2, n_classes)
+        )
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(self, x):
+        # x shape: [batch_size, n_features, time_steps]
+        batch_size, n_features, time_steps = x.shape
+
+        # Add channel dimension and project
+        x = x.unsqueeze(-1)  # [batch_size, n_features, time_steps, 1]
+        x = self.input_projection(x)  # [batch_size, n_features, time_steps, d_model]
+
+        # Add positional encoding
+        x = self.pos_encoder(x)
+
+        # Feature attention block
+        x_feat = x.transpose(1, 2).reshape(batch_size * time_steps, n_features, self.d_model)
+        identity = x_feat
+
+        x_feat, feat_weights = self.feature_attention(x_feat, x_feat, x_feat)
+        x_feat = identity + self.dropout(x_feat)
+        x_feat = self.feature_norm(x_feat)
+
+        identity = x_feat
+        x_feat = identity + self.dropout(self.feature_ff(x_feat))
+        x_feat = self.feature_ff_norm(x_feat)
+
+        x = x_feat.view(batch_size, time_steps, n_features, self.d_model).transpose(1, 2)
+
+        # Time attention block
+        x_time = x.reshape(batch_size * n_features, time_steps, self.d_model)
+        identity = x_time
+
+        x_time, time_weights = self.time_attention(x_time, x_time, x_time)
+        x_time = identity + self.dropout(x_time)
+        x_time = self.time_norm(x_time)
+
+        identity = x_time
+        x_time = identity + self.dropout(self.time_ff(x_time))
+        x_time = self.time_ff_norm(x_time)
+
+        x = x_time.view(batch_size, n_features, time_steps, self.d_model)
+
+        # Global average pooling over time
+        x = x.mean(dim=2)  # [batch_size, n_features, d_model]
+
+        # Final feed-forward with residual connection
+        identity = x
+        x = identity + self.dropout(self.output_ff(x))
+        x = self.output_norm(x)
+
+        # Classification head
+        logits = self.classifier(x)  # [batch_size, n_features, n_classes]
+
+        return logits, feat_weights, time_weights
+
+class DualAttentionClassifier1(nn.Module):
+    """
+    A dual attention model that incorporates both feature and time attention mechanisms.
+    Similar to DualAttentionModel but outputs only 1 classification (for each sample).
+    """
+    def __init__(self, n_features, time_steps, n_classes, d_model=128, n_heads=8, dropout=0.1):
+        super().__init__()
+
+        self.d_model = d_model
+        self.n_features = n_features
+        self.n_classes = n_classes
+
+        # Input projection
+        self.input_projection = nn.Linear(1, d_model)
+
+        # Positional encoding
+        self.pos_encoder = PositionalEncoding(d_model)
+
+        # Feature attention block
+        self.feature_attention = MultiHeadAttention(d_model, n_heads, dropout)
+        self.feature_norm = nn.LayerNorm(d_model)
+        self.feature_ff = FeedForward(d_model, dropout=dropout)
+        self.feature_ff_norm = nn.LayerNorm(d_model)
+
+        # Time attention block
+        self.time_attention = MultiHeadAttention(d_model, n_heads, dropout)
+        self.time_norm = nn.LayerNorm(d_model)
+        self.time_ff = FeedForward(d_model, dropout=dropout)
+        self.time_ff_norm = nn.LayerNorm(d_model)
+        
+        # Output layers with residual connection
+        self.output_ff = FeedForward(d_model, dropout=dropout)
+        self.output_norm = nn.LayerNorm(d_model)
+        
+        # Learned pooling over features
+        self.feature_pool = nn.Linear(n_features, 1)
+
+        # Classification head with feature pooling
+        self.classifier = nn.Sequential(
+            nn.Linear(d_model, d_model // 2),
+            nn.ReLU(),
+            nn.Dropout(dropout),
+            nn.Linear(d_model // 2, n_classes)
+        )
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(self, x):
+        # x shape: [batch_size, n_features, time_steps]
+        batch_size, n_features, time_steps = x.shape
+
+        # Add channel dimension and project
+        x = x.unsqueeze(-1)  # [batch_size, n_features, time_steps, 1]
+        x = self.input_projection(x)  # [batch_size, n_features, time_steps, d_model]
+
+        # Add positional encoding
+        x = self.pos_encoder(x)
+
+        # Feature attention block
+        x_feat = x.transpose(1, 2).reshape(batch_size * time_steps, n_features, self.d_model)
+        identity = x_feat
+
+        x_feat, feat_weights = self.feature_attention(x_feat, x_feat, x_feat)
+        x_feat = identity + self.dropout(x_feat)
+        x_feat = self.feature_norm(x_feat)
+
+        identity = x_feat
+        x_feat = identity + self.dropout(self.feature_ff(x_feat))
+        x_feat = self.feature_ff_norm(x_feat)
+
+        x = x_feat.view(batch_size, time_steps, n_features, self.d_model).transpose(1, 2)
+
+        # Time attention block
+        x_time = x.reshape(batch_size * n_features, time_steps, self.d_model)
+        identity = x_time
+
+        x_time, time_weights = self.time_attention(x_time, x_time, x_time)
+        x_time = identity + self.dropout(x_time)
+        x_time = self.time_norm(x_time)
+
+        identity = x_time
+        x_time = identity + self.dropout(self.time_ff(x_time))
+        x_time = self.time_ff_norm(x_time)
+
+        x = x_time.view(batch_size, n_features, time_steps, self.d_model)
+
+        # Global average pooling over time
+        x = x.mean(dim=2)  # [batch_size, n_features, d_model]
+
+        # Final feed-forward with residual connection
+        identity = x
+        x = identity + self.dropout(self.output_ff(x))
+        x = self.output_norm(x)
+
+        # Pool across features using learned weights
+        x = x.transpose(1, 2)  # [batch_size, d_model, n_features]
+        x = self.feature_pool(x)  # [batch_size, d_model, 1]
+        x = x.squeeze(-1)  # [batch_size, d_model]
+
+        # Classification head
+        logits = self.classifier(x)  # [batch_size, n_classes]
+
+        return logits, feat_weights, time_weights
+
     
 def visualize_predictions(model, test_loader, device='cuda', num_examples=3):
     
