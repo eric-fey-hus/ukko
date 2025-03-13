@@ -285,9 +285,109 @@ class DualAttentionModule(nn.Module):
 
         return x, feat_weights, time_weights
 
-class DualAttentionModel(nn.Module):
+class MultipleClassificationHead(nn.Module):
     """
-    A model that stacks multiple DualAttentionModules followed by a final projection.
+    A modular classification head that handles feature pooling and multiple classifications
+    (one for each feature).
+    
+    Model architecture:
+    - Final feed-forward with residual connection
+    - Output normalization
+    - Classification layers with:
+        - Linear layer with ReLU activation  
+        - Dropout
+        - Final linear projection
+    """
+    def __init__(self, d_model, n_features, n_classes, dropout=0.1):
+        super().__init__()
+        
+        # Output layers with residual connection
+        self.output_ff = FeedForward(d_model, dropout=dropout)
+        self.output_norm = nn.LayerNorm(d_model)
+        
+        # Classification head for each feature
+        self.classifier = nn.Sequential(
+            nn.Linear(d_model, d_model // 2),
+            nn.ReLU(),
+            nn.Dropout(dropout),
+            nn.Linear(d_model // 2, n_classes)
+        )
+        
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(self, x):
+        # x shape: [batch_size, n_features, d_model]
+        
+        # Final feed-forward with residual connection  
+        identity = x
+        x = identity + self.dropout(self.output_ff(x))
+        x = self.output_norm(x)
+
+        # Apply classifier to each feature independently
+        logits = self.classifier(x)  # [batch_size, n_features, n_classes]
+        
+        return logits
+
+class DualAttentionClassifier(nn.Module):
+    """
+    A model that stacks multiple DualAttentionModules followed by classification heads.
+    Outputs classifications for each feature (one per feature).
+    """
+    def __init__(self, n_features, time_steps, n_classes, d_model=128, n_heads=8, dropout=0.1, n_modules=1):
+        super().__init__()
+        
+        # Stack of dual attention modules
+        self.modules_list = nn.ModuleList([
+            DualAttentionModule(n_features, time_steps, d_model, n_heads, dropout)
+            for _ in range(n_modules)
+        ])
+
+        # Time pooling layer
+        self.time_pool = nn.Parameter(torch.randn(d_model))
+        self.pool_attention = nn.Linear(d_model, 1)
+        
+        # Classification head (one classifier per feature)
+        self.classification_head = MultipleClassificationHead(
+            d_model=d_model,
+            n_features=n_features, 
+            n_classes=n_classes,
+            dropout=dropout
+        )
+
+    def forward(self, x):
+        batch_size, n_features, time_steps = x.shape
+        x = x.unsqueeze(-1)  # [batch_size, n_features, time_steps, 1]
+        
+        # Store attention weights
+        all_feat_weights = []
+        all_time_weights = []
+
+        # Pass through attention modules
+        for i, module in enumerate(self.modules_list):
+            x, feat_weights, time_weights = module(x, is_first_module=(i==0))
+            all_feat_weights.append(feat_weights)
+            all_time_weights.append(time_weights)
+
+        # Learned pooling over time
+        time_weights = torch.tanh(self.pool_attention(x))
+        time_weights = F.softmax(time_weights, dim=2)
+        x = (x * time_weights).sum(dim=2)  # [batch_size, n_features, d_model]
+
+        # Apply classification head
+        logits = self.classification_head(x)
+        
+        return logits, all_feat_weights[-1], all_time_weights[-1]
+
+class DualAttentionRegressor(nn.Module):
+    """
+    A dual attention model for regression tasks. Uses DualAttentionModule for the main processing.
+    Outputs one regression value per feature.
+    
+    Model architecture:
+    - Stack of DualAttentionModules
+    - Global time pooling
+    - Output feed-forward with residual connection
+    - Final regression projection
     """
     def __init__(self, n_features, time_steps, d_model=128, n_heads=8, dropout=0.1, n_modules=1):
         super().__init__()
@@ -297,63 +397,45 @@ class DualAttentionModel(nn.Module):
             DualAttentionModule(n_features, time_steps, d_model, n_heads, dropout)
             for _ in range(n_modules)
         ])
-
-        # Add learned pooling weights
-        self.time_pool = nn.Parameter(torch.randn(d_model))
-        self.pool_attention = nn.Linear(d_model, 1)
-        self.feature_pool = nn.Linear(n_features, 1)  # Learned pooling weights
         
-        # Output layers
+        # Output layers with residual connection
         self.output_ff = FeedForward(d_model, dropout=dropout)
         self.output_norm = nn.LayerNorm(d_model)
-        self.fc = nn.Linear(d_model, 1)
-        self.fcd = nn.Linear(d_model, d_model)
-        self.final_fc = nn.Linear(d_model, 2)  # Final classification layer: number of classes
+        
+        # Final regression projection (one value per feature)
+        self.regressor = nn.Linear(d_model, 1)
+        
         self.dropout = nn.Dropout(dropout)
 
     def forward(self, x):
+        # x shape: [batch_size, n_features, time_steps]
         batch_size, n_features, time_steps = x.shape
         x = x.unsqueeze(-1)  # [batch_size, n_features, time_steps, 1]
         
-        # Store attention weights from all modules
+        # Store attention weights
         all_feat_weights = []
         all_time_weights = []
 
-        # Pass through each dual attention module
+        # Pass through attention modules
         for i, module in enumerate(self.modules_list):
             x, feat_weights, time_weights = module(x, is_first_module=(i==0))
             all_feat_weights.append(feat_weights)
             all_time_weights.append(time_weights)
 
-        # Pooling (over time)
-        # Instead of: Global average pooling over time
-        # x = x.mean(dim=2)  # [batch_size, n_features, d_model]
-        # We do: learned pooling:
-        # Calculate attention weights for time steps
-        time_weights = torch.tanh(self.pool_attention(x))  # [batch_size, n_features, time_steps, 1]
-        time_weights = F.softmax(time_weights, dim=2)  # [batch_size, n_features, time_steps, 1]
-        # Apply weighted pooling
-        x = (x * time_weights).sum(dim=2)  # [batch_size, n_features, d_model]
+        # Global average pooling over time
+        x = x.mean(dim=2)  # [batch_size, n_features, d_model]
 
         # Final feed-forward with residual connection
         identity = x
         x = identity + self.dropout(self.output_ff(x))
         x = self.output_norm(x)
 
-        # Final projection
-        x = self.fcd(x)  # [batch_size, n_features, d_model]
-        # Insted of mean pooling over features
-        # x = x.mean(dim=1) # [batch_size, d_model] - average over features
-        # Use learned pooling
-        x = x.transpose(1, 2)  # [batch_size, d_model, n_features]
-        x = self.feature_pool(x)  # [batch_size, d_model, 1]
-        x = x.squeeze(-1)  # [batch_size, d_model]
-
-        x = self.final_fc(x)  # [batch_size, 1] 
+        # Final regression projection
+        predictions = self.regressor(x).squeeze(-1)  # [batch_size, n_features]
         
-        # Return last module's attention weights (or could return all)
-        return x, all_feat_weights[-1], all_time_weights[-1]
+        return predictions, all_feat_weights[-1], all_time_weights[-1]
 
+# Depreciated: use DualAttentionregressor instead
 class DualAttentionModelOld(nn.Module):
     """
     A dual attention model that incorporates both feature and time attention mechanisms.
