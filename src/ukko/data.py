@@ -136,7 +136,7 @@ class SineWaveDataset(Dataset):
         """
         # Get total samples
         n_samples = len(self)
-        sample_x, sample_y = dataset[0]
+        sample_x, sample_y = self[0]
         
         return n_samples, self.n_features, self.sequence_length, self.prediction_length
 
@@ -147,7 +147,7 @@ def plot_example_dataset(dataset, sample_idx=0, feature_idx=0):
     x, y = dataset[sample_idx]
     xgt, ygt = dataset.__getgtitem__(sample_idx)
 
-    plt.figure(figsize=(15, 2))
+    fig = plt.figure(figsize=(15, 2))
 
     # Plot data sample with noise
     # Plot input sequence with markers
@@ -160,7 +160,7 @@ def plot_example_dataset(dataset, sample_idx=0, feature_idx=0):
     #         y[feature_idx], 's', label='Target sequence', color='red',
     #         markersize=6, markerfacecolor='white', markeredgewidth=1)
     plt.plot(len(x[feature_idx]) + dataset.prediction_length - 1,
-             y[feature_idx], 's', label='Target sequence', color='red',
+             y[feature_idx], 's', label='Target sequence', color='blue',
              markersize=6, markerfacecolor='white', markeredgewidth=1)
 
     # Plot groundtruth wave
@@ -183,4 +183,5 @@ def plot_example_dataset(dataset, sample_idx=0, feature_idx=0):
              transform=plt.gca().transAxes, fontsize=8,
              bbox=dict(facecolor='white', alpha=0.8))
 
-    plt.show()
+    #plt.show()
+    return fig

@@ -3,7 +3,7 @@ Test suite for the core functionality.
 """
 
 import pytest, torch
-from ukko.core import DualAttentionModel
+from ukko.core import DualAttentionRegressor
 
 def test_your_function():
     """Test your_function works as expected."""
@@ -20,7 +20,7 @@ def test_model():
     x = torch.randn(batch_size, n_features, time_steps)
 
     # Initialize model
-    model = DualAttentionModel(
+    model = DualAttentionRegressor(
         n_features=n_features,
         time_steps=time_steps,
         d_model=10,
