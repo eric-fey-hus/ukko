@@ -1,7 +1,7 @@
 """
 Core functionality of the package.
-Functions of the package are her. 
-If you develop them in a notebook, mpve them here when ready.
+Functions of the package are here. 
+If you develop them in a notebook, move them here when ready.
 """
 
 # attention model with residual connectoin
@@ -160,8 +160,9 @@ class FeedForward(nn.Module):
 
     def forward(self, x):
         return self.linear2(self.dropout(self.activation(self.linear1(x))))
-    
-class ClassificationHead(nn.Module):
+
+# DEPRECIATED use ClassificationHead instead
+class ClassificationHead_old(nn.Module):
     """
     A modular classification head that handles feature pooling and classification.
     
@@ -203,6 +204,76 @@ class ClassificationHead(nn.Module):
         # Classification
         logits = self.classifier(x)  # [batch_size, n_classes]
         return logits
+
+class ClassificationHead(nn.Module):
+    """
+    A modular classification head that handles feature pooling and multi-label classification.
+    Each sample can have multiple independent labels (default: binary 0/1 for each label).
+    
+    Model architecture:
+    - Feature pooling (learned or mean)
+    - Classifier MLP with:
+        - Linear layer
+        - ReLU activation
+        - Dropout
+        - Final linear projection to n_labels predictions
+        
+    Args:
+        d_model (int): Hidden dimension size
+        n_features (int): Number of input features
+        n_labels (int): Number of independent labels to predict
+        n_classes_per_label (int): Number of classes per label (default: 2 for binary)
+        dropout (float): Dropout rate
+        use_learned_pooling (bool): Whether to use learned pooling over features
+    """
+    def __init__(self, d_model, n_features, n_labels, n_classes_per_label=2, 
+                 dropout=0.1, use_learned_pooling=True):
+        super().__init__()
+        
+        # Feature pooling
+        self.use_learned_pooling = use_learned_pooling
+        if use_learned_pooling:
+            self.feature_pool = nn.Linear(n_features, 1)
+        
+        # Store dimensions
+        self.n_labels = n_labels
+        self.n_classes_per_label = n_classes_per_label
+        
+        # Classification layers - outputs predictions for each label
+        self.classifier = nn.Sequential(
+            nn.Linear(d_model, d_model // 2),
+            nn.ReLU(),
+            nn.Dropout(dropout),
+            nn.Linear(d_model // 2, n_labels * n_classes_per_label)
+        )
+
+    def forward(self, x):
+        """
+        Forward pass of the classification head.
+        
+        Args:
+            x (torch.Tensor): Input tensor [batch_size, n_features, d_model]
+            
+        Returns:
+            torch.Tensor: Logits for each label [batch_size, n_labels, n_classes_per_label]
+        """
+        # Pool across features
+        if self.use_learned_pooling:
+            x = x.transpose(1, 2)  # [batch_size, d_model, n_features]
+            x = self.feature_pool(x)  # [batch_size, d_model, 1]
+            x = x.squeeze(-1)  # [batch_size, d_model]
+        else:
+            x = x.mean(dim=1)  # [batch_size, d_model]
+        
+        # Get logits for all labels
+        logits = self.classifier(x)  # [batch_size, n_labels * n_classes_per_label]
+        
+        # Reshape to separate logits for each label
+        logits = logits.view(-1, self.n_labels, self.n_classes_per_label)
+        
+        return logits
+
+
 
 
 class DualAttentionModule(nn.Module):
@@ -335,7 +406,15 @@ class DualAttentionClassifier(nn.Module):
     """
     def __init__(self, n_features, time_steps, n_classes, d_model=128, n_heads=8, dropout=0.1, n_modules=1):
         super().__init__()
-        
+        # Model parameters:
+        self.n_features = n_features 
+        self.time_steps = time_steps 
+        self.n_classes  = n_classes
+        self.d_model    = d_model 
+        self.n_heads    = n_heads 
+        self.dropout    = dropout
+        self.n_modules  = n_modules
+
         # Stack of dual attention modules
         self.modules_list = nn.ModuleList([
             DualAttentionModule(n_features, time_steps, d_model, n_heads, dropout)
@@ -392,6 +471,14 @@ class DualAttentionRegressor(nn.Module):
     def __init__(self, n_features, time_steps, d_model=128, n_heads=8, dropout=0.1, n_modules=1):
         super().__init__()
         
+        #Model parameters:
+        self.n_features = n_features 
+        self.time_steps = time_steps 
+        self.d_model    = d_model 
+        self.n_heads    = n_heads 
+        self.dropout    = dropout
+        self.n_modules  = n_modules
+
         # Stack of dual attention modules
         self.modules_list = nn.ModuleList([
             DualAttentionModule(n_features, time_steps, d_model, n_heads, dropout)
@@ -549,12 +636,25 @@ class DualAttentionModelOld(nn.Module):
 class DualAttentionClassifier1(nn.Module):
     """
     A dual attention model that incorporates both feature and time attention mechanisms.
-    Similar to DualAttentionModel but outputs only 1 classification (for each sample).
+    Similar to DualAttentionModel but outputs n_labels classifications (for each sample).
     Uses DualAttentionModule for the main processing.
-    """
-    def __init__(self, n_features, time_steps, n_classes, d_model=128, n_heads=8, dropout=0.1, n_modules=1):
-        super().__init__()
+
+    Usage:
+    DualAttentionClassifier1(n_features, time_steps, n_labels=1, n_classes=2, d_model=128, n_heads=8, dropout=0.1, n_modules=1)
         
+    """
+    def __init__(self, n_features, time_steps, n_labels=1, n_classes=2, d_model=128, n_heads=8, dropout=0.1, n_modules=1):
+        super().__init__()
+        # Model parameters
+        self.n_features = n_features 
+        self.time_steps = time_steps 
+        self.n_labels   = n_labels 
+        self.n_classes  = n_classes
+        self.d_model    = d_model 
+        self.n_heads    = n_heads 
+        self.dropout    = dropout
+        self.n_modules  = n_modules
+
         # Stack of dual attention modules
         self.modules_list = nn.ModuleList([
             DualAttentionModule(n_features, time_steps, d_model, n_heads, dropout)
@@ -572,7 +672,8 @@ class DualAttentionClassifier1(nn.Module):
         self.classification_head = ClassificationHead(
             d_model=d_model,
             n_features=n_features,
-            n_classes=n_classes,
+            n_labels=n_labels,
+            n_classes_per_label=n_classes,
             dropout=dropout,
             use_learned_pooling=True
         )
@@ -702,7 +803,7 @@ class DualAttentionClassifier_old(nn.Module):
 
         return logits, feat_weights, time_weights
 
-class DualAttentionClassifier1(nn.Module):
+class DualAttentionClassifier1_old(nn.Module):
     """
     A dual attention model that incorporates both feature and time attention mechanisms.
     Similar to DualAttentionModel but outputs only 1 classification (for each sample).
