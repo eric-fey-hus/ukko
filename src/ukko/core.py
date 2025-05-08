@@ -156,7 +156,7 @@ class FeedForward(nn.Module):
         self.linear1 = nn.Linear(d_model, d_ff)
         self.linear2 = nn.Linear(d_ff, d_model)
         self.dropout = nn.Dropout(dropout)
-        self.activation = nn.ReLU()
+        self.activation = nn.LeakyReLU()
 
     def forward(self, x):
         return self.linear2(self.dropout(self.activation(self.linear1(x))))
@@ -307,7 +307,7 @@ class DualAttentionModule(nn.Module):
         # Feature attention block
         self.feature_attention = MultiHeadAttention(d_model, n_heads, dropout)
         self.feature_norm = nn.LayerNorm(d_model)
-        self.feature_ff = FeedForward(d_model, dropout=dropout)
+        #self.feature_ff = FeedForward(d_model, dropout=dropout)
         self.feature_ff_norm = nn.LayerNorm(d_model)
 
         # Time attention block
@@ -334,9 +334,10 @@ class DualAttentionModule(nn.Module):
         x_feat = identity + self.dropout(x_feat)
         x_feat = self.feature_norm(x_feat)
 
-        identity = x_feat
-        x_feat = identity + self.dropout(self.feature_ff(x_feat))
-        x_feat = self.feature_ff_norm(x_feat)
+        # Feed-forward for feature attention block
+        #identity = x_feat
+        #x_feat = identity + self.dropout(self.feature_ff(x_feat))
+        #x_feat = self.feature_ff_norm(x_feat)
 
         x = x_feat.view(batch_size, time_steps, n_features, self.d_model).transpose(1, 2)
 
@@ -348,6 +349,7 @@ class DualAttentionModule(nn.Module):
         x_time = identity + self.dropout(x_time)
         x_time = self.time_norm(x_time)
 
+        # Feed-forward for time attention block
         identity = x_time
         x_time = identity + self.dropout(self.time_ff(x_time))
         x_time = self.time_ff_norm(x_time)
@@ -519,6 +521,80 @@ class DualAttentionRegressor(nn.Module):
 
         # Final regression projection
         predictions = self.regressor(x).squeeze(-1)  # [batch_size, n_features]
+        
+        return predictions, all_feat_weights[-1], all_time_weights[-1]
+
+class DualAttentionRegressor1(nn.Module):
+    """
+    A dual attention model for regression tasks. Uses DualAttentionModule for the main processing.
+    Outputs one regression value for the entire input (as opposed to one per feature).
+    
+    Model architecture:
+    - Stack of DualAttentionModules
+    - Global time pooling
+    - Learned feature pooling
+    - Output feed-forward with residual connection
+    - Final regression projection
+    """
+    def __init__(self, n_features, time_steps, d_model=128, n_heads=8, dropout=0.1, n_modules=1, n_outputs=1):
+        super().__init__()
+        
+        # Model parameters:
+        self.n_features = n_features 
+        self.time_steps = time_steps 
+        self.d_model    = d_model 
+        self.n_heads    = n_heads 
+        self.dropout    = dropout
+        self.n_modules  = n_modules
+
+        # Stack of dual attention modules
+        self.modules_list = nn.ModuleList([
+            DualAttentionModule(n_features, time_steps, d_model, n_heads, dropout)
+            for _ in range(n_modules)
+        ])
+        
+        # Output layers with residual connection
+        self.output_ff = FeedForward(d_model, dropout=dropout)
+        self.output_norm = nn.LayerNorm(d_model)
+        
+        # Learned feature pooling
+        self.feature_pool = nn.Linear(n_features, 1)
+        
+        # Final regression projection (single value)
+        self.regressor = nn.Linear(d_model, n_outputs)
+        
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(self, x):
+        # x shape: [batch_size, n_features, time_steps]
+        batch_size, n_features, time_steps = x.shape
+        x = x.unsqueeze(-1)  # [batch_size, n_features, time_steps, 1]
+        
+        # Store attention weights
+        all_feat_weights = []
+        all_time_weights = []
+
+        # Pass through attention modules
+        for i, module in enumerate(self.modules_list):
+            x, feat_weights, time_weights = module(x, is_first_module=(i==0))
+            all_feat_weights.append(feat_weights)
+            all_time_weights.append(time_weights)
+
+        # Global average pooling over time
+        x = x.mean(dim=2)  # [batch_size, n_features, d_model]
+
+        # Final feed-forward with residual connection
+        identity = x
+        x = identity + self.dropout(self.output_ff(x))
+        x = self.output_norm(x)
+
+        # Pool across features using learned weights
+        x = x.transpose(1, 2)  # [batch_size, d_model, n_features]
+        x = self.feature_pool(x)  # [batch_size, d_model, 1]
+        x = x.squeeze(-1)  # [batch_size, d_model]
+
+        # Final regression projection
+        predictions = self.regressor(x).squeeze(-1)  # [batch_size]
         
         return predictions, all_feat_weights[-1], all_time_weights[-1]
 

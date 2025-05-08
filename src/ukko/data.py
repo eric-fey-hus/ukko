@@ -38,6 +38,10 @@ class SineWaveDataset(Dataset):
         self.base_freq = base_freq
         self.noise_level = noise_level
         self.freq_array = []
+        # keep track of frequency, amplitude, and phase for feature 1
+        self.f1A = []
+        self.f1f = []
+        self.f1P = []
 
         # Create time points
         t = np.linspace(0, (sequence_length + prediction_length) * 2 * np.pi,
@@ -68,6 +72,9 @@ class SineWaveDataset(Dataset):
                     # make phase and amplitude random for each sample
                     phase = np.random.uniform(0, 2 * np.pi)
                     amplitude = np.random.uniform(0.5, 2.0)
+                    self.f1f.append(freq)
+                    self.f1A.append(amplitude)
+                    self.f1P.append(phase)
                 elif f==1:
                     # make phase random
                     phase = np.random.uniform(0, 2 * np.pi)
