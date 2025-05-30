@@ -51,6 +51,13 @@ Multivariate models:
     $\log \lambda(x) = \beta_0 + \beta_i x_i $
 
   - Common distributions: Weibull, log-logistic, log-normal
+  - ToDo: look into fragility terms that provide robustness to unmodelled covariates. 
+
+## Log-logistic AFT model
+
+Log-logistic is commonly used, especially for cancer survial data.
+The reason is, that unlike the [Weibull distribution](#Weibull-AFT-model) it can model a non-montonous hazard function that can increase at earlier times and decrease at later times.  
+Like log-normal, but heavier tails. 
 
 ## Weibull AFT model:
 
