@@ -70,7 +70,8 @@ def plot_loglogistic_hazard(shape_params, scale, max_time):
 
 def generate_survival_data_LL(n_samples, n_features, n_informative_features, 
                               loglogistic_shape, loglogistic_scale, 
-                              target_censoring_percentage):
+                              target_censoring_percentage, 
+                              nonlinear=False):
     """
     Generates a synthetic survival dataset based on an Accelerated Failure Time (AFT) model
     with a Log-Logistic distribution.
@@ -109,7 +110,7 @@ def generate_survival_data_LL(n_samples, n_features, n_informative_features,
     # We'll use these coefficients to modify the log of the scale parameter.
     coefficients = np.zeros(n_features)
     # Coefficients will influence the log of the scale parameter
-    coefficients[:n_informative_features] = np.random.uniform(-0.5, 0.5, n_informative_features) 
+    coefficients[:n_informative_features] = np.random.uniform(0.1, 0.5, n_informative_features) 
 
     # 3. Calculate the linear predictor (beta * X)
     linear_predictor = np.dot(X, coefficients)
@@ -123,6 +124,27 @@ def generate_survival_data_LL(n_samples, n_features, n_informative_features,
     # A positive coefficient in AFT means a longer time to event (acceleration factor > 1)
     # So, exp(linear_predictor) acts as the acceleration factor.
     effective_scale = loglogistic_scale * np.exp(linear_predictor)
+    #print(f"coefficients {coefficients}")
+    print(f"effective_scale linear {effective_scale}") 
+
+    if nonlinear:
+        print(f"mean of linear_predictor: {np.mean(linear_predictor)}")
+        # Define Gaussian function:
+        def gaussian(x, a=1, b=1, c=1):
+            """
+            Gaussian function with parameters a (peak height), b (possition), and c (width).
+            """
+            return a * np.exp( - (x - b) ** 2 / (2 * c ** 2))
+        def f(x):
+            return gaussian(x, a=1, b=np.mean(linear_predictor), c=1)
+        effective_scale_lin = loglogistic_scale * np.exp(linear_predictor)
+        effective_scale = loglogistic_scale * np.exp(f(linear_predictor))
+        print(f"effective_scale nonlin {effective_scale}") 
+        figure, ax = plt.subplots(1, 2, figsize=(10, 3))
+        ax[0].scatter(effective_scale_lin, effective_scale, alpha=0.5)
+        ax[0].set_xlabel('Effective Scale (linear)')
+        ax[0].set_ylabel('Effective Scale (nonlinear)')
+
 
     # Ensure scale parameter is positive
     effective_scale = np.maximum(effective_scale, 1e-6) 
