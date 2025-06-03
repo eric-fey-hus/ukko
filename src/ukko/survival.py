@@ -125,10 +125,10 @@ def generate_survival_data_LL(n_samples, n_features, n_informative_features,
     # So, exp(linear_predictor) acts as the acceleration factor.
     effective_scale = loglogistic_scale * np.exp(linear_predictor)
     #print(f"coefficients {coefficients}")
-    print(f"effective_scale linear {effective_scale}") 
+    #print(f"effective_scale linear {effective_scale}") 
 
     if nonlinear:
-        print(f"mean of linear_predictor: {np.mean(linear_predictor)}")
+        #print(f"mean of linear_predictor: {np.mean(linear_predictor)}")
         # Define Gaussian function:
         def gaussian(x, a=1, b=1, c=1):
             """
@@ -139,11 +139,11 @@ def generate_survival_data_LL(n_samples, n_features, n_informative_features,
             return gaussian(x, a=1, b=np.mean(linear_predictor), c=1)
         effective_scale_lin = loglogistic_scale * np.exp(linear_predictor)
         effective_scale = loglogistic_scale * np.exp(f(linear_predictor))
-        print(f"effective_scale nonlin {effective_scale}") 
-        figure, ax = plt.subplots(1, 2, figsize=(10, 3))
-        ax[0].scatter(effective_scale_lin, effective_scale, alpha=0.5)
-        ax[0].set_xlabel('Effective Scale (linear)')
-        ax[0].set_ylabel('Effective Scale (nonlinear)')
+        #print(f"effective_scale nonlin {effective_scale}") 
+        figure, ax = plt.subplots(1, 1, figsize=(3, 3))
+        ax.scatter(effective_scale_lin, effective_scale, alpha=0.5)
+        ax.set_xlabel('Effective Scale (linear)')
+        ax.set_ylabel('Effective Scale (nonlinear)')
 
 
     # Ensure scale parameter is positive

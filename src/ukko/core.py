@@ -1101,3 +1101,142 @@ def plot_training_curves(
     plt.legend()
     plt.grid(True)
     plt.show()
+
+# -----------------------------------------------------------------------
+# Ukko LogHazard models
+# -----------------------------------------------------------------------
+
+import torchsurv.loss.cox as tscox
+import copy
+
+# Define the Ukko LogHazard model
+class UkkoLogHazardModel(nn.Module):
+    """A neural network model for survival analysis using dual attention mechanisms.
+
+    This model combines a dual attention regressor to estimate log hazard rates for survival analysis.
+    It processes feature inputs through multiple attention heads to capture complex relationships
+    between features and predict survival outcomes.
+
+    Parameters
+    ----------
+    n_features : int
+        Number of input features/covariates.
+
+    Attributes
+    ----------
+    attention_net : ukko.DualAttentionRegressor1
+        The dual attention network with the following configuration:
+        - 64 dimensional model space
+        - 4 attention heads
+        - 0.1 dropout rate
+        - 3 attention modules
+        - Single timestep processing
+
+    Methods
+    -------
+    forward(x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]
+        Forward pass of the model.
+        
+        Parameters:
+            x (torch.Tensor): Input tensor of shape [batch_size, n_features]
+        
+        Returns:
+            Tuple containing:
+            - predictions (torch.Tensor): Log hazard predictions
+            - feat_weights (torch.Tensor): Feature attention weights
+            - time_weights (torch.Tensor): Time attention weights
+    """
+    def __init__(self, n_features):
+        super().__init__()
+        self.attention_net = DualAttentionRegressor1(
+            n_features=n_features,
+            time_steps=1,  # Since we're using instantaneous inputs
+            d_model=64,
+            n_heads=4,
+            dropout=0.1,
+            n_modules=3
+        )
+    
+    def forward(self, x):
+        # Add time dimension expected by DualAttentionRegressor
+        x = x.unsqueeze(2)  # [batch_size, n_features, 1]
+        
+        # Get predictions from attention network
+        predictions, feat_weights, time_weights = self.attention_net(x)
+        
+        return predictions, feat_weights, time_weights
+
+# Define a simple training function for the model:
+def train_model_simple(model, train_loader, optimizer, n_epochs=100, device='gpu', reduction='mean'):
+    """Train a survival model with basic monitoring.
+    
+    Args:
+        model: PyTorch model to train
+        train_loader: DataLoader for training data
+        optimizer: PyTorch optimizer
+        n_epochs: Number of training epochs
+        device: Device to train on ('cuda' or 'cpu')
+        reduction: Loss reduction method ('mean' or 'sum')
+    
+    Returns:
+        model: Trained model (best version)
+        history: Dict containing training losses
+        best_loss: Best training loss achieved
+    """
+    # Setup device
+    device = torch.device(device if torch.cuda.is_available() and device=='gpu' else 'cpu')
+    model = model.to(device)
+    
+    # Initialize tracking variables
+    history = {'train_loss': []}
+    best_loss = float('inf')
+    best_model_state = None
+    
+    for epoch in range(n_epochs):
+        # Adjust learning rate after 300 epochs
+        if epoch == 300:
+          for param_group in optimizer.param_groups:
+              param_group['lr'] = 0.0001
+              
+        model.train()
+        total_loss = 0
+        
+        for X_batch, times_batch, events_batch in train_loader:
+            X_batch = X_batch.to(device)
+            times_batch = times_batch.to(device)
+            events_batch = events_batch.to(device)
+            
+            optimizer.zero_grad()
+            if model.__class__.__name__ == 'UkkoLogHazardModel':
+                # For Ukko model, we need to handle the output differently
+                log_hazards, feat_weights, time_weights = model(X_batch)
+            else:
+                # For standard LogHazardModel
+                log_hazards = model(X_batch)
+            
+            loss = tscox.neg_partial_log_likelihood(
+                log_hazards, events_batch==1, times_batch, 
+                ties_method='efron', reduction=reduction
+            )
+            
+            loss.backward()
+            optimizer.step()
+            
+            total_loss += loss.item()
+        
+        # Calculate average loss
+        avg_loss = total_loss / len(train_loader)
+        history['train_loss'].append(avg_loss)
+        
+        # Save best model
+        if avg_loss < best_loss:
+            best_loss = avg_loss
+            best_model_state = copy.deepcopy(model.state_dict())
+        
+        if (epoch + 1) % 3 == 0:
+            print(f'Epoch {epoch+1}/{n_epochs}, Loss: {avg_loss:.4f}, Best Loss: {best_loss:.4f}')
+    
+    # Load best model
+    model.load_state_dict(best_model_state)
+    
+    return model, history, best_loss
