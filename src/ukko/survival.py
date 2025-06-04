@@ -137,9 +137,16 @@ def generate_survival_data_LL(n_samples, n_features, n_informative_features,
             return a * np.exp( - (x - b) ** 2 / (2 * c ** 2))
         def f(x):
             return gaussian(x, a=1, b=np.mean(linear_predictor), c=1)
+        scale_factor = np.mean(np.exp(linear_predictor)) / np.mean(np.exp(f(linear_predictor)))
+        #print(f"scale_factor: {scale_factor}")
+        def f(x):
+            return gaussian(x, a=scale_factor, b=np.mean(linear_predictor), c=1)
         effective_scale_lin = loglogistic_scale * np.exp(linear_predictor)
         effective_scale = loglogistic_scale * np.exp(f(linear_predictor))
-        #print(f"effective_scale nonlin {effective_scale}") 
+        #print(f"mean: {np.mean(linear_predictor)}")
+        #print(f"mean: {np.mean(f(linear_predictor))}")
+        #print(f"mean of effective_scale_lin: {np.mean(effective_scale_lin)}")
+        #print(f"mean of effective_scale: {np.mean(effective_scale)}")
         figure, ax = plt.subplots(1, 1, figsize=(3, 3))
         ax.scatter(effective_scale_lin, effective_scale, alpha=0.5)
         ax.set_xlabel('Effective Scale (linear)')
