@@ -1167,7 +1167,7 @@ class UkkoLogHazardModel(nn.Module):
         return predictions, feat_weights, time_weights
 
 # Define a simple training function for the model:
-def train_model_simple(model, train_loader, optimizer, n_epochs=100, device='gpu', reduction='mean'):
+def train_model_simple(model, train_loader, optimizer, n_epochs=100, device='cuda', reduction='mean'):
     """Train a survival model with basic monitoring.
     
     Args:
@@ -1184,7 +1184,7 @@ def train_model_simple(model, train_loader, optimizer, n_epochs=100, device='gpu
         best_loss: Best training loss achieved
     """
     # Setup device
-    device = torch.device(device if torch.cuda.is_available() and device=='gpu' else 'cpu')
+    device = torch.device(device if torch.cuda.is_available() and device=='cuda' else 'cpu')
     model = model.to(device)
     
     # Initialize tracking variables
@@ -1233,7 +1233,7 @@ def train_model_simple(model, train_loader, optimizer, n_epochs=100, device='gpu
             best_loss = avg_loss
             best_model_state = copy.deepcopy(model.state_dict())
         
-        if (epoch + 1) % 3 == 0:
+        if (epoch + 1) % 10 == 0:
             print(f'Epoch {epoch+1}/{n_epochs}, Loss: {avg_loss:.4f}, Best Loss: {best_loss:.4f}')
     
     # Load best model
