@@ -6,6 +6,13 @@ The ukko codebase is a Python package for deep learning on tabular longitudinal 
 - Several survival heads (survival model output layers) are beeing explored atm
 - Key feature of teh core models is a dual attention mechanism 
 
+Running notes for development (try to keep this up to date!):
+- Survival heads:
+  - Own survival head implementation:  
+    `Survival_model_dev`
+  - torchsurv heads:  
+    `torchsurv_AML_model`
+
 ## Structure
 
 ```sh
