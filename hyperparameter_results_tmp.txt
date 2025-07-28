@@ -1,0 +1,3 @@
+Params: {'learning_rate': 0.01, 'd_model': 16, 'n_heads': 8, 'n_modules': 2, 'dropout': 0.2} | val_loss: 5.061037063598633
+Params: {'learning_rate': 0.01, 'd_model': 16, 'n_heads': 8, 'n_modules': 3, 'dropout': 0.2} | val_loss: 5.539912700653076
+Params: {'learning_rate': 0.01, 'd_model': 16, 'n_heads': 8, 'n_modules': 4, 'dropout': 0.2} | val_loss: 5.537532329559326

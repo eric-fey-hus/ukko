@@ -100,6 +100,16 @@ class MultiHeadAttention(nn.Module):
         self.W_v = nn.Linear(d_model, d_model)
         self.W_o = nn.Linear(d_model, d_model)
 
+        # Init the attention weights with xavier (uniform or normal should not make much difference), becasue 
+        #  - does varaince balancing and 
+        #  - tranforms attention weight into probabilities for better interpretability and smoother training 
+        # Kaiming also an option (default for nn.Liner) but we dont ahve ReLu in attentions, so all ok with xavier 
+        nn.init.xavier_uniform_(self.W_q.weight)
+        nn.init.xavier_uniform_(self.W_k.weight)
+        nn.init.xavier_uniform_(self.W_v.weight)
+        nn.init.xavier_uniform_(self.W_o.weight)
+        # You might also initialize biases to zero or a small constant if present
+
         self.dropout = nn.Dropout(dropout)
 
     def forward(self, query, key, value, mask=None):
@@ -141,6 +151,156 @@ class MultiHeadAttention(nn.Module):
         output = self.W_o(output)
 
         return output, attention_weights
+
+
+class GroupedQueryAttention(nn.Module):
+    """
+    Implements Grouped-Query Attention (GQA), a variant of Multi-Head Attention
+    designed to improve inference speed and reduce KV cache memory.
+    In GQA, query heads are divided into groups, and each group shares a
+    single set of Key and Value projections.
+
+    Attributes:
+        d_model (int): The dimensionality of the input and output features.
+        n_heads (int): The total number of query attention heads.
+        n_kv_heads (int): The number of Key and Value heads. Must be
+                          less than or equal to n_heads and n_heads must be
+                          divisible by n_kv_heads.
+        d_k (int): The dimensionality of each attention head (d_model // n_heads for queries).
+        d_kv (int): The dimensionality of each Key/Value head (d_model // n_kv_heads).
+        W_q (nn.Linear): Linear layer to project the input query to the query space.
+        W_k (nn.Linear): Linear layer to project the input key to the key space (for n_kv_heads).
+        W_v (nn.Linear): Linear layer to project the input value to the value space (for n_kv_heads).
+        W_o (nn.Linear): Linear layer to project the concatenated output of all attention heads.
+        dropout (nn.Dropout): Dropout layer applied to the attention weights.
+    """
+    def __init__(self, d_model, n_heads, n_kv_heads, dropout=0.1):
+        """
+        Initializes the GroupedQueryAttention module.
+
+        Args:
+            d_model (int): The dimensionality of the input and output features.
+            n_heads (int): The total number of query attention heads.
+            n_kv_heads (int): The number of Key and Value heads.
+            dropout (float, optional): Dropout probability for the attention weights. Default is 0.1.
+
+        Raises:
+            AssertionError: If d_model is not divisible by n_heads,
+                            or if n_heads is not divisible by n_kv_heads.
+        """
+        super().__init__()
+        assert d_model % n_heads == 0, "d_model must be divisible by n_heads"
+        assert n_heads % n_kv_heads == 0, "n_heads must be divisible by n_kv_heads for grouping"
+        assert n_kv_heads <= n_heads, "n_kv_heads cannot be greater than n_heads"
+
+        self.d_model = d_model
+        self.n_heads = n_heads
+        self.n_kv_heads = n_kv_heads
+        self.d_k = d_model // n_heads       # Dimension per Query head
+        self.d_kv = d_model // n_kv_heads   # Dimension per KV head (used for linear layer output)
+
+        # Query projection remains standard
+        self.W_q = nn.Linear(d_model, d_model) # Output d_model for n_heads * d_k
+        # Key and Value projections produce n_kv_heads
+        self.W_k = nn.Linear(d_model, self.n_kv_heads * self.d_k) # Output n_kv_heads * d_k
+        self.W_v = nn.Linear(d_model, self.n_kv_heads * self.d_k) # Output n_kv_heads * d_k
+        # Output projection remains standard
+        self.W_o = nn.Linear(d_model, d_model)
+
+        # Init the attention weights with xavier (uniform or normal should not make much difference), becasue 
+        #  - does varaince balancing and 
+        #  - tranforms attention weight into probabilities for better interpretability and smoother training 
+        # Kaiming also an option (default for nn.Liner) but we dont ahve ReLu in attentions, so all ok with xavier 
+        nn.init.xavier_uniform_(self.W_q.weight)
+        nn.init.xavier_uniform_(self.W_k.weight)
+        nn.init.xavier_uniform_(self.W_v.weight)
+        nn.init.xavier_uniform_(self.W_o.weight)
+        # You might also initialize biases to zero or a small constant if present
+        
+        self.dropout = nn.Dropout(dropout)
+
+        # Calculate how many query heads per KV head
+        self.n_reps = self.n_heads // self.n_kv_heads
+
+    def _repeat_kv(self, x, n_reps):
+        """
+        Repeats the K/V heads N_reps times to match the number of query heads.
+        Input x: (batch_size, n_kv_heads, seq_len, d_k)
+        Output: (batch_size, n_heads, seq_len, d_k)
+        """
+        batch_size, n_kv_heads, seq_len, d_k = x.shape
+        if n_reps == 1: # If n_heads == n_kv_heads, it's just MHA, no repetition needed
+            return x
+        return x[:, :, None, :, :].expand(batch_size, n_kv_heads, n_reps, seq_len, d_k).reshape(
+            batch_size, n_kv_heads * n_reps, seq_len, d_k
+        )
+
+    def forward(self, query, key, value, mask=None):
+        """
+        Performs the forward pass of the Grouped-Query Attention mechanism.
+
+        Args:
+            query (torch.Tensor): The input query tensor of shape (batch_size, seq_len, d_model).
+            key (torch.Tensor): The input key tensor of shape (batch_size, seq_len, d_model).
+            value (torch.Tensor): The input value tensor of shape (batch_size, seq_len, d_model).
+            mask (torch.Tensor, optional): The mask tensor to apply to the attention scores. Default is None.
+
+        Returns:
+            Tuple[torch.Tensor, torch.Tensor]: A tuple containing:
+                - output (torch.Tensor): The output tensor of shape (batch_size, seq_len, d_model).
+                - attention_weights (torch.Tensor): The attention weights tensor of shape (batch_size, n_heads, seq_len, seq_len).
+        """
+        batch_size = query.size(0)
+        seq_len_q = query.size(1) # Sequence length for Query
+        seq_len_kv = key.size(1)  # Sequence length for Key/Value
+
+        # 1. Project Query, Key, Value
+        # Q: (batch_size, seq_len_q, d_model)
+        # K, V: (batch_size, seq_len_kv, n_kv_heads * d_k)
+        Q = self.W_q(query)
+        K = self.W_k(key)
+        V = self.W_v(value)
+
+        # 2. Reshape for Multi-Head Attention
+        # Q: (batch_size, n_heads, seq_len_q, d_k)
+        # K, V: (batch_size, n_kv_heads, seq_len_kv, d_k)
+        # Note: K and V are reshaped to self.n_kv_heads, not self.n_heads
+        Q = Q.view(batch_size, seq_len_q, self.n_heads, self.d_k).transpose(1, 2)
+        K = K.view(batch_size, seq_len_kv, self.n_kv_heads, self.d_k).transpose(1, 2)
+        V = V.view(batch_size, seq_len_kv, self.n_kv_heads, self.d_k).transpose(1, 2)
+
+        # 3. Repeat K and V heads to match the number of query heads
+        # K, V after repeat: (batch_size, n_heads, seq_len_kv, d_k)
+        K = self._repeat_kv(K, self.n_reps)
+        V = self._repeat_kv(V, self.n_reps)
+
+        # 4. Calculate Attention Scores (standard dot product)
+        # scores: (batch_size, n_heads, seq_len_q, seq_len_kv)
+        scores = torch.matmul(Q, K.transpose(-2, -1)) / math.sqrt(self.d_k)
+
+        # 5. Apply mask
+        if mask is not None:
+            # Mask should be broadcastable to scores shape
+            # (batch_size, 1, seq_len_q, seq_len_kv) or (1, 1, seq_len_q, seq_len_kv)
+            scores = scores.masked_fill(mask == 0, float('-inf'))
+
+        # 6. Apply Softmax and Dropout
+        attention_weights = torch.softmax(scores, dim=-1)
+        attention_weights = self.dropout(attention_weights)
+
+        # 7. Compute weighted sum of Values
+        # output: (batch_size, n_heads, seq_len_q, d_k)
+        output = torch.matmul(attention_weights, V)
+
+        # 8. Concatenate heads and apply final linear layer
+        # output: (batch_size, seq_len_q, d_model)
+        output = output.transpose(1, 2).contiguous().view(batch_size, seq_len_q, self.d_model)
+        output = self.W_o(output)
+
+        return output, attention_weights
+
+
+#----
 
 class FeedForward(nn.Module):
     """
@@ -294,24 +454,26 @@ class DualAttentionModule(nn.Module):
         - Time attention block
         - Each feed-forward MLP block
     """
-    def __init__(self, n_features, time_steps, d_model=128, n_heads=8, dropout=0.1):
+    def __init__(self, n_features, time_steps, d_model=128, n_heads=8, n_kv_heads = 4, dropout=0.1):
         super().__init__()
         self.d_model = d_model
         
         # Input projection (only needed for first module)
         self.input_projection = nn.Linear(1, d_model)
-
+        
         # Positional encoding
         self.pos_encoder = PositionalEncoding(d_model)
 
         # Feature attention block
-        self.feature_attention = MultiHeadAttention(d_model, n_heads, dropout)
+        #self.feature_attention = MultiHeadAttention(d_model, n_heads, dropout)
+        self.feature_attention = GroupedQueryAttention(d_model, n_heads, n_kv_heads, dropout)
         self.feature_norm = nn.LayerNorm(d_model)
-        #self.feature_ff = FeedForward(d_model, dropout=dropout)
+        self.feature_ff = FeedForward(d_model, dropout=dropout)
         self.feature_ff_norm = nn.LayerNorm(d_model)
 
         # Time attention block
-        self.time_attention = MultiHeadAttention(d_model, n_heads, dropout)
+        #self.time_attention = MultiHeadAttention(d_model, n_heads, dropout)
+        self.time_attention = GroupedQueryAttention(d_model, n_heads, n_kv_heads, dropout)
         self.time_norm = nn.LayerNorm(d_model)
         self.time_ff = FeedForward(d_model, dropout=dropout)
         self.time_ff_norm = nn.LayerNorm(d_model)
@@ -323,6 +485,8 @@ class DualAttentionModule(nn.Module):
 
         # Apply input projection and positional encoding only for first module
         if is_first_module:
+            #print(f"x device: {x.device}")
+            #print(f"input_projection weights device in forward: {self.input_projection.weight.device}")
             x = self.input_projection(x.unsqueeze(-1))  # Project to d_model
             x = self.pos_encoder(x)
 
@@ -335,9 +499,9 @@ class DualAttentionModule(nn.Module):
         x_feat = self.feature_norm(x_feat)
 
         # Feed-forward for feature attention block
-        #identity = x_feat
-        #x_feat = identity + self.dropout(self.feature_ff(x_feat))
-        #x_feat = self.feature_ff_norm(x_feat)
+        identity = x_feat
+        x_feat = identity + self.dropout(self.feature_ff(x_feat))
+        x_feat = self.feature_ff_norm(x_feat)
 
         x = x_feat.view(batch_size, time_steps, n_features, self.d_model).transpose(1, 2)
 
@@ -470,7 +634,7 @@ class DualAttentionRegressor(nn.Module):
     - Output feed-forward with residual connection
     - Final regression projection
     """
-    def __init__(self, n_features, time_steps, d_model=128, n_heads=8, dropout=0.1, n_modules=1):
+    def __init__(self, n_features, time_steps, d_model=128, n_heads=8, n_kv_heads = 4, dropout=0.1, n_modules=1):
         super().__init__()
         
         #Model parameters:
@@ -483,7 +647,7 @@ class DualAttentionRegressor(nn.Module):
 
         # Stack of dual attention modules
         self.modules_list = nn.ModuleList([
-            DualAttentionModule(n_features, time_steps, d_model, n_heads, dropout)
+            DualAttentionModule(n_features, time_steps, d_model, n_heads,  n_kv_heads=n_kv_heads, dropout=dropout)
             for _ in range(n_modules)
         ])
         
@@ -536,20 +700,21 @@ class DualAttentionRegressor1(nn.Module):
     - Output feed-forward with residual connection
     - Final regression projection
     """
-    def __init__(self, n_features, time_steps, d_model=128, n_heads=8, dropout=0.1, n_modules=1, n_outputs=1):
+    def __init__(self, n_features, time_steps, d_model=128, n_heads=8, dropout=0.1, n_modules=1, n_outputs=1, n_kv_heads=4):
         super().__init__()
         
         # Model parameters:
         self.n_features = n_features 
         self.time_steps = time_steps 
         self.d_model    = d_model 
-        self.n_heads    = n_heads 
+        self.n_heads    = n_heads
+        self.n_kv_heads = n_kv_heads
         self.dropout    = dropout
         self.n_modules  = n_modules
 
         # Stack of dual attention modules
         self.modules_list = nn.ModuleList([
-            DualAttentionModule(n_features, time_steps, d_model, n_heads, dropout)
+            DualAttentionModule(n_features, time_steps, d_model, n_heads, n_kv_heads=n_kv_heads, dropout=dropout)
             for _ in range(n_modules)
         ])
         
