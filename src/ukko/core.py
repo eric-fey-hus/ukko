@@ -634,7 +634,7 @@ class DualAttentionRegressor(nn.Module):
     - Output feed-forward with residual connection
     - Final regression projection
     """
-    def __init__(self, n_features, time_steps, d_model=128, n_heads=8, dropout=0.1, n_modules=1):
+    def __init__(self, n_features, time_steps, d_model=128, n_heads=8, n_kv_heads = 4, dropout=0.1, n_modules=1):
         super().__init__()
         
         #Model parameters:
@@ -647,7 +647,7 @@ class DualAttentionRegressor(nn.Module):
 
         # Stack of dual attention modules
         self.modules_list = nn.ModuleList([
-            DualAttentionModule(n_features, time_steps, d_model, n_heads, dropout)
+            DualAttentionModule(n_features, time_steps, d_model, n_heads,  n_kv_heads=n_kv_heads, dropout=dropout)
             for _ in range(n_modules)
         ])
         

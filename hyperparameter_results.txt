@@ -1,6 +1,0 @@
-Params: {'learning_rate': 0.01, 'd_model': 16, 'n_heads': 8, 'n_modules': 1, 'dropout': 0.1} | val_loss: 5.076644420623779
-Params: {'learning_rate': 0.01, 'd_model': 16, 'n_heads': 8, 'n_modules': 1, 'dropout': 0.2} | val_loss: 5.0754075050354
-Params: {'learning_rate': 0.01, 'd_model': 16, 'n_heads': 8, 'n_modules': 2, 'dropout': 0.1} | val_loss: 5.119619369506836
-Params: {'learning_rate': 0.01, 'd_model': 16, 'n_heads': 8, 'n_modules': 2, 'dropout': 0.2} | val_loss: 5.072055816650391
-Params: {'learning_rate': 0.01, 'd_model': 16, 'n_heads': 8, 'n_modules': 3, 'dropout': 0.1} | val_loss: 5.416365146636963
-Params: {'learning_rate': 0.01, 'd_model': 16, 'n_heads': 8, 'n_modules': 3, 'dropout': 0.2} | val_loss: 5.250255107879639
