@@ -4,20 +4,30 @@ Transformer model for tabular longitudinal data.
 The ukko codebase is a Python package for deep learning on tabular longitudinal (time-series) and survival data, with a focus on transformer-based and Cox proportional hazards models. 
 
 - Several survival heads (survival model output layers) are beeing explored atm
-- Key feature of teh core models is a dual attention mechanism 
+- Key feature of the core models is a dual attention mechanism 
 
 Running notes for development (try to keep this up to date!):
 - Survival heads:
   - Own survival head implementation:  
     `Survival_model_dev`
-  - torchsurv heads:  
+  - torchsurv heads (currenlty used):  
     `torchsurv_AML_model`
+- Attention heads:
+  - Multi Head Attention (MHA) (former, no longer used)
+  - Group Query Attention (GQA) (currently used)
+  - Multi-head Latent Attention (MLA) (to be explored, but no parameter saving?)
+- Main model for survial 
+  - Dual Attention Rregressor + torchsurch (currenltly)
+
 
 ## Structure
 
 ```sh
 ukko/
 ├── pyproject.toml
+├── acamedic/
+├── data/
+├── experiments/
 ├── src/
 │   └── ukko/
 │       ├── __init__.py
@@ -37,6 +47,19 @@ ukko/
   - `core.py`: Function definitions of the package. 
   - `ukko_get_started.ipynb`:
      A Jupyter notebook containing usage examplesfor the ukko package.
+
+- acamedic/:
+  - for working in acamedic: here and only here!
+  - IMPORTANT: nbstrip notebooks before exporting 
+
+- data/:
+  - fake AML data for testing
+
+- experiemnts/:
+  - log of ML experiments; copy your notebook you want to keep here. 
+    Add date to notebook name for record keeping. 
+
+
 
 ## Key Features
 
