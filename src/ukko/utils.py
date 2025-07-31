@@ -3,7 +3,17 @@ import pandas as pd
 import numpy as np
 
 def convert_to_3d_df(df):
+    """
+    Convert a DataFrame with tuple column names ('feature', timepoint) to a 3D numpy array.
 
+    Args:
+        df (pd.DataFrame): Input DataFrame with columns as tuples ('feature', timepoint), 
+        e.g. [('feature1', 0), ('feature1', 1), ..., ('featureN', T)]. 
+
+    Returns:
+        df_multiindex (pd.DataFrame): DataFrame with MultiIndex columns [Feature, Timepoint].
+        data_3d (np.ndarray): Array of shape [samples, features, timepoints].
+    """
     # Convert column names to tuples, assuming this "('feature', timepoint)"
     columns = [eval(col) for col in df.columns]
     df.columns = columns
@@ -37,3 +47,39 @@ def convert_to_3d_df(df):
     df_multiindex = pd.DataFrame(data_3d.reshape(n_rows, -1), columns=columns)
     
     return df_multiindex, data_3d
+
+
+def downsample_timepoints(data_3f, rate=2):
+    """
+    Downsamples the timepoints of a 3D array (samples, features, timepoints) by the given rate.
+    Each downsampled timepoint is:
+      - the true non-nan value if only one exists,
+      - the average of non-nan values if more than one,
+      - nan if all are nan.
+
+    Args:
+        data_3f (np.ndarray): Array of shape (samples, features, timepoints)
+        rate (int): Downsampling rate (e.g., 2 for half, 3 for third)
+
+    Returns:
+        np.ndarray: Downsampled array of shape (samples, features, timepoints // rate)
+    """
+    samples, features, timepoints = data_3f.shape
+    new_timepoints = int(np.ceil(timepoints / rate))
+    downsampled = np.full((samples, features, new_timepoints), np.nan, dtype=float)
+
+    for t in range(new_timepoints):
+        start = t * rate
+        end = min((t + 1) * rate, timepoints)
+        window = data_3f[:, :, start:end]  # shape: (samples, features, window_size)
+        # Compute per sample-feature downsampled value
+        for i in range(samples):
+            for j in range(features):
+                vals = window[i, j, :]
+                not_nan = vals[~np.isnan(vals)]
+                if len(not_nan) == 1:
+                    downsampled[i, j, t] = not_nan[0]
+                elif len(not_nan) > 1:
+                    downsampled[i, j, t] = np.mean(not_nan)
+                # else: remains nan
+    return downsampled
